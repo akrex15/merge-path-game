@@ -864,6 +864,7 @@ function showFloat(r,c,text,col){
 }
 
 // ═══════ EVENTS ═══════
+document.addEventListener('touchstart',function(){ia();if(ac&&ac.state==='suspended')ac.resume();},{once:true});
 cv.addEventListener('mousedown',onD);cv.addEventListener('mousemove',onM);window.addEventListener('mouseup',onU);
 cv.addEventListener('touchstart',function(e){e.preventDefault();onD(e)},{passive:false});
 cv.addEventListener('touchmove',function(e){e.preventDefault();onM(e)},{passive:false});
