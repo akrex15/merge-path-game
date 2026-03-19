@@ -76,6 +76,7 @@ function ia(){if(!ac)try{ac=new AC()}catch(e){}if(ac&&ac.state==='suspended')ac.
 
 function bpop(pitch,vol){
   ia();if(!ac)return;
+  console.log(ac.state);
   try{
     var t=ac.currentTime;
     var o1=ac.createOscillator(),o2=ac.createOscillator();
