@@ -170,6 +170,9 @@ var selecting=false,selPath=[],active=false;
 var particles=[],popT={},POP_DUR=150;
 var protectedTile=null; // {r,c} tile that cannot be destroyed during the current resolution
 var nextTiles=[];
+var activeSweep=null; // {row, originX, startTime, dur}
+var fallingTiles=[]; // [{col, val, spec, fromRow, toRow, startTime}]
+var FALL_DUR=60;
 
 // ═══════ INIT ═══════
 function initGrid(){
@@ -359,6 +362,95 @@ function render(){
     ctx.beginPath();ctx.arc(p.x,p.y,p.size*p.life,0,Math.PI*2);ctx.fill();
   }
   ctx.globalAlpha=1;
+
+  // Draw line-clear sweep
+  if(activeSweep){
+    var sw=activeSweep;
+    var swEl=Date.now()-sw.startTime;
+    if(swEl>=sw.dur){
+      activeSweep=null;
+    }else{
+      var swProg=swEl/sw.dur;
+      var swY=sw.row*(TS+GP);
+      var swReach=swProg*cv.width;
+      var ox=sw.originX;
+      ctx.save();
+      // left trail
+      if(ox-swReach<ox){
+        var lgL=ctx.createLinearGradient(ox-swReach,0,ox,0);
+        lgL.addColorStop(0,'rgba(245,158,11,0)');
+        lgL.addColorStop(0.7,'rgba(245,158,11,0.3)');
+        lgL.addColorStop(1,'rgba(255,220,80,0.5)');
+        ctx.fillStyle=lgL;
+        ctx.fillRect(ox-swReach,swY,swReach,TS);
+        // left leading edge
+        var leL=ctx.createLinearGradient(ox-swReach-4,0,ox-swReach+16,0);
+        leL.addColorStop(0,'rgba(255,255,255,0)');
+        leL.addColorStop(0.5,'rgba(255,220,80,0.9)');
+        leL.addColorStop(1,'rgba(255,255,255,1)');
+        ctx.fillStyle=leL;
+        ctx.fillRect(ox-swReach-4,swY,20,TS);
+      }
+      // right trail
+      if(swReach>0){
+        var lgR=ctx.createLinearGradient(ox,0,ox+swReach,0);
+        lgR.addColorStop(0,'rgba(255,220,80,0.5)');
+        lgR.addColorStop(0.3,'rgba(245,158,11,0.3)');
+        lgR.addColorStop(1,'rgba(245,158,11,0)');
+        ctx.fillStyle=lgR;
+        ctx.fillRect(ox,swY,swReach,TS);
+        // right leading edge
+        var leR=ctx.createLinearGradient(ox+swReach-16,0,ox+swReach+4,0);
+        leR.addColorStop(0,'rgba(255,255,255,1)');
+        leR.addColorStop(0.5,'rgba(255,220,80,0.9)');
+        leR.addColorStop(1,'rgba(255,255,255,0)');
+        ctx.fillStyle=leR;
+        ctx.fillRect(ox+swReach-16,swY,20,TS);
+      }
+      ctx.restore();
+    }
+  }
+
+  // Draw falling tiles
+  for(var fi=fallingTiles.length-1;fi>=0;fi--){
+    var ft=fallingTiles[fi];
+    var ftEl=Date.now()-ft.startTime;
+    var ftProg=Math.min(ftEl/FALL_DUR,1);
+    var ftEased=ftProg*ftProg;
+    var fromY=ft.fromRow*(TS+GP);
+    var toY=ft.toRow*(TS+GP);
+    var ftY=fromY+(toY-fromY)*ftEased;
+    var ftX=ft.col*(TS+GP);
+    var ftd=tileData(ft.val);
+    var frad=Math.min(9,TS*0.15);
+    ctx.save();
+    // solid background first so tile is never transparent
+    ctx.beginPath();
+    ctx.moveTo(ftX+frad,ftY);ctx.lineTo(ftX+TS-frad,ftY);ctx.quadraticCurveTo(ftX+TS,ftY,ftX+TS,ftY+frad);
+    ctx.lineTo(ftX+TS,ftY+TS-frad);ctx.quadraticCurveTo(ftX+TS,ftY+TS,ftX+TS-frad,ftY+TS);
+    ctx.lineTo(ftX+frad,ftY+TS);ctx.quadraticCurveTo(ftX,ftY+TS,ftX,ftY+TS-frad);
+    ctx.lineTo(ftX,ftY+frad);ctx.quadraticCurveTo(ftX,ftY,ftX+frad,ftY);ctx.closePath();
+    ctx.fillStyle='#0f1724';ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(ftX+frad,ftY);ctx.lineTo(ftX+TS-frad,ftY);ctx.quadraticCurveTo(ftX+TS,ftY,ftX+TS,ftY+frad);
+    ctx.lineTo(ftX+TS,ftY+TS-frad);ctx.quadraticCurveTo(ftX+TS,ftY+TS,ftX+TS-frad,ftY+TS);
+    ctx.lineTo(ftX+frad,ftY+TS);ctx.quadraticCurveTo(ftX,ftY+TS,ftX,ftY+TS-frad);
+    ctx.lineTo(ftX,ftY+frad);ctx.quadraticCurveTo(ftX,ftY,ftX+frad,ftY);ctx.closePath();
+    ctx.fillStyle=ftd.col;ctx.fill();
+    ctx.fillStyle='rgba(0,0,0,0.55)';
+    ctx.font='900 '+(TS*0.44)+'px Nunito';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(ft.val,ftX+TS/2,ftY+TS/2+1);
+    ctx.restore();
+    // write to grid and remove only after drawing at final position
+    if(ftEl>=FALL_DUR){
+      if(grid[ft.toRow][ft.col]===0){
+        grid[ft.toRow][ft.col]=ft.val;
+        special[ft.toRow][ft.col]=ft.spec;
+      }
+      fallingTiles.splice(fi,1);
+    }
+  }
 }
 
 function isInSel(r,c){for(var i=0;i<selPath.length;i++)if(selPath[i][0]===r&&selPath[i][1]===c)return true;return false}
@@ -420,7 +512,7 @@ function doMerge(){
   var triggeredSpecials=[];
   for(var i=0;i<selPath.length;i++){
     var sr=selPath[i][0],sc=selPath[i][1];
-    if(special[sr][sc]>0) triggeredSpecials.push({r:sr,c:sc,type:special[sr][sc]});
+    if(special[sr][sc]>0) triggeredSpecials.push({r:sr,c:sc,type:special[sr][sc],originR:target[0],originC:target[1]});
   }
 
   // Instant clear all path tiles
@@ -435,8 +527,8 @@ function doMerge(){
   special[target[0]][target[1]]=0;
   popT[target[0]+','+target[1]]=Date.now();
 
-  if(count>=5) special[target[0]][target[1]]=2;
-  else if(count>=4) special[target[0]][target[1]]=1;
+  if(count>=6) special[target[0]][target[1]]=2;
+  else if(count>=5) special[target[0]][target[1]]=1;
 
   // Protect the newly created reward tile during this resolution
   protectedTile={r:target[0],c:target[1]};
@@ -444,7 +536,8 @@ function doMerge(){
   var pts=count*val*10;
   if(count>=4)pts=Math.floor(pts*1.5);
   if(count>=5)pts=Math.floor(pts*2);
-  if(count>=6)pts=Math.floor(pts*3);
+  if(count>=6)pts=Math.floor(pts*2.5);
+  if(count>=7)pts=Math.floor(pts*3);
   score+=pts;totalMerges++;
 
   // New highest
@@ -465,14 +558,14 @@ function doMerge(){
 
   mergeChord(count);
 
-  if(count>=5){
+  if(count>=6){
     var fl2=document.getElementById('flash');fl2.style.background='rgba(168,85,247,0.2)';fl2.style.opacity='1';
     setTimeout(function(){fl2.style.opacity='0'},250);
     var gc=document.getElementById('gc');gc.classList.add('shake');setTimeout(function(){gc.classList.remove('shake')},300);
     var ct2=document.getElementById('chainTxt');ct2.className='chain-txt';ct2.textContent=count+'x BLAST EARNED!';
     ct2.style.color='#c084fc';ct2.style.textShadow='0 0 30px rgba(168,85,247,0.6)';ct2.style.fontSize=Math.min(38+count*6,70)+'px';
     void ct2.offsetWidth;ct2.classList.add('show');
-  }else if(count>=4){
+  }else if(count>=5){
     var fl3=document.getElementById('flash');fl3.style.background='rgba(245,158,11,0.15)';fl3.style.opacity='1';
     setTimeout(function(){fl3.style.opacity='0'},200);
     var gc2=document.getElementById('gc');gc2.classList.add('shake');setTimeout(function(){gc2.classList.remove('shake')},300);
@@ -505,12 +598,17 @@ function doMerge(){
   }else{
     setTimeout(function(){
       protectedTile=null;
-      applyGravity();render();
+      applyGravity(true);render();
       setTimeout(function(){
-        spawnTiles();applyGravity();genNext();render();updateHUD();
+        var emptyCells={};
+        for(var r=0;r<ROWS;r++)for(var c=0;c<COLS;c++)if(grid[r][c]===0)emptyCells[r+','+c]=true;
+        spawnTiles();applyGravity(false);
+        var now=Date.now();
+        for(var key in emptyCells)if(emptyCells[key]&&grid[key.split(',')[0]][key.split(',')[1]]>0)popT[key]=now;
+        genNext();render();updateHUD();
         if(isGameOver())setTimeout(function(){gameOver(false)},400);
       },100);
-    },80);
+    },30);
   }
 }
 
@@ -564,13 +662,13 @@ function blastSnd(){
   }catch(e){}
 }
 
-function triggerSpecials(specials){
+function triggerSpecials(specials,isChain){
   var bonusPts=0;
 
   for(var s=0;s<specials.length;s++){
     var sp=specials[s];
     if(sp.type===1){
-      triggerLineClear(sp.r);
+      triggerLineClear(sp.r,sp.originC);
       bonusPts+=COLS*20;
     }else if(sp.type===2){
       triggerBlast(sp.r,sp.c);
@@ -593,53 +691,77 @@ function triggerSpecials(specials){
   render();
   updateHUD();
 
+  // if chaining, skip gravity/spawn — the parent triggerSpecials handles that
+  if(isChain) return;
+
   setTimeout(function(){
     protectedTile=null;
-    applyGravity();
+    applyGravity(true);
     render();
 
     setTimeout(function(){
+      var emptyCells={};
+      for(var r=0;r<ROWS;r++)for(var c=0;c<COLS;c++)if(grid[r][c]===0)emptyCells[r+','+c]=true;
       spawnTiles();
-      applyGravity();
+      applyGravity(false);
+      var now=Date.now();
+      for(var key in emptyCells)if(emptyCells[key]&&grid[key.split(',')[0]][key.split(',')[1]]>0)popT[key]=now;
       genNext();
       render();
       updateHUD();
       if(isGameOver()) setTimeout(function(){gameOver(false)},400);
-    },100);
-  },80);
+    },120);
+  },220);
 }
 
-function triggerLineClear(row){
+function triggerLineClear(row,originCol){
+  lineClearSnd();
+
+  var sweepDur=200;
+  var sweepStart=Date.now();
+  var originX=originCol*(TS+GP)+TS/2;
+
+  activeSweep={row:row,originX:originX,startTime:sweepStart,dur:sweepDur};
+
+  var chainedSpecials=[];
+
+  // Each tile clears as sweep passes outward from origin
   for(var c=0;c<COLS;c++){
     if(protectedTile && protectedTile.r===row && protectedTile.c===c) continue;
-
     if(grid[row][c]!==0){
-      burst(row,c,tileData(Math.abs(grid[row][c])).col,10);
-      grid[row][c]=0;
-      special[row][c]=0;
+      (function(col){
+        var dist=Math.abs(col-originCol);
+        var clearAt=(dist/(COLS-1))*sweepDur;
+        setTimeout(function(){
+          if(grid[row][col]!==0){
+            // if this tile is itself a special, chain it
+            if(special[row][col]>0){
+              chainedSpecials.push({r:row,c:col,type:special[row][col],originR:row,originC:col});
+            }
+            burst(row,col,tileData(Math.abs(grid[row][col])).col,10);
+            grid[row][col]=0;
+            special[row][col]=0;
+          }
+        },clearAt);
+      })(c);
     }
   }
 
-  lineClearSnd();
-
-  var fl=document.getElementById('flash');
-  fl.style.background='linear-gradient(transparent 0%,transparent '+(row*20)+'%,rgba(245,158,11,0.5) '+(row*20)+'%,rgba(245,158,11,0.5) '+((row+1)*20)+'%,transparent '+((row+1)*20)+'%)';
-  fl.style.opacity='1';
-  setTimeout(function(){fl.style.opacity='0'},250);
+  // trigger any chained specials after sweep completes
+  setTimeout(function(){
+    if(chainedSpecials.length>0){
+      triggerSpecials(chainedSpecials,true);
+    }
+  },sweepDur+50);
 
   var gc=document.getElementById('gc');
   gc.classList.add('shake');
   setTimeout(function(){gc.classList.remove('shake')},300);
-
-  for(var c=0;c<COLS;c++){
-    var px=c*(TS+GP)+TS/2,py=row*(TS+GP)+TS/2;
-    for(var p=0;p<4;p++){
-      particles.push({x:px,y:py,vx:(Math.random()-0.5)*8,vy:(Math.random()-0.5)*2,life:1,decay:0.02,size:3+Math.random()*3,col:'#f59e0b'});
-    }
-  }
 }
 
 function triggerBlast(cr,cc){
+  var chainedSpecials=[];
+
   for(var dr=-1;dr<=1;dr++){
     for(var dc=-1;dc<=1;dc++){
       var nr=cr+dr,nc=cc+dc;
@@ -647,6 +769,9 @@ function triggerBlast(cr,cc){
       if(protectedTile && protectedTile.r===nr && protectedTile.c===nc) continue;
 
       if(grid[nr][nc]!==0){
+        if(special[nr][nc]>0){
+          chainedSpecials.push({r:nr,c:nc,type:special[nr][nc],originR:nr,originC:nc});
+        }
         burst(nr,nc,tileData(Math.abs(grid[nr][nc])).col,10);
         grid[nr][nc]=0;
         special[nr][nc]=0;
@@ -670,22 +795,33 @@ function triggerBlast(cr,cc){
     var a=Math.random()*Math.PI*2,sp=3+Math.random()*10;
     particles.push({x:cx2,y:cy2,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-2,life:1,decay:0.012+Math.random()*0.01,size:3+Math.random()*6,col:Math.random()>0.5?'#c084fc':'#e879f9'});
   }
+
+  // trigger any chained specials after blast animation
+  if(chainedSpecials.length>0){
+    setTimeout(function(){
+      triggerSpecials(chainedSpecials,true);
+    },200);
+  }
 }
 
 // ═══════ GRAVITY & SPAWN ═══════
-function applyGravity(){
+function applyGravity(animate){
+  var now=Date.now();
   for(var c=0;c<COLS;c++){
-    var tiles=[];var specs=[];
+    var tiles=[];
     for(var r=ROWS-1;r>=0;r--){
-      if(grid[r][c]!==0){tiles.push(grid[r][c]);specs.push(special[r][c]);}
+      if(grid[r][c]>0){tiles.push({val:grid[r][c],spec:special[r][c],fromRow:r});}
     }
-    for(var r=ROWS-1;r>=0;r--){
-      var idx=ROWS-1-r;
-      var nv=idx<tiles.length?tiles[idx]:0;
-      var ns=idx<specs.length?specs[idx]:0;
-      if(nv!==0&&nv!==grid[r][c])popT[r+','+c]=Date.now();
-      grid[r][c]=nv;
-      special[r][c]=ns;
+    for(var r=0;r<ROWS;r++){grid[r][c]=0;special[r][c]=0;}
+    for(var i=0;i<tiles.length;i++){
+      var toRow=ROWS-1-i;
+      var t=tiles[i];
+      if(animate && t.fromRow!==toRow){
+        fallingTiles.push({col:c,val:t.val,spec:t.spec,fromRow:t.fromRow,toRow:toRow,startTime:now});
+      }else{
+        grid[toRow][c]=t.val;
+        special[toRow][c]=t.spec;
+      }
     }
   }
 }
@@ -763,6 +899,7 @@ function forceOneLegalMove(){
 
 function spawnTiles(){
   var toSpawn=nextTiles.slice();
+  var spawned=[];
 
   for(var s=0;s<toSpawn.length;s++){
     if(!hasEmptyCell()) break;
@@ -781,13 +918,15 @@ function spawnTiles(){
     }
 
     grid[pos[0]][pos[1]]=val;
-    popT[pos[0]+','+pos[1]]=Date.now();
+    spawned.push(pos);
   }
 
   // Hard guarantee: if board is not full, there must be at least one move
   if(hasEmptyCell() && !hasLegalMove()){
     forceOneLegalMove();
   }
+
+  return spawned;
 }
 
 function isGameOver(){
